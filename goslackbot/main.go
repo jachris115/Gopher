@@ -1,9 +1,16 @@
+// Code from resources below
+// https://www.bacancytechnology.com/blog/develop-slack-bot-using-golang
+// https://github.com/sourabh-bacancy/Slack_Bot/tree/main
+
 package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/slack-go/slack"
@@ -47,7 +54,10 @@ func main() {
 					}
 
 					socket_client.Ack(*event.Request)
-					log.Println(events_api)
+					err := HandleEventMessage(events_api, client)
+					if err != nil {
+						log.Fatal(err)
+					}
 				}
 			}
 		}
@@ -55,4 +65,52 @@ func main() {
 	}(ctx, client, socket_client)
 
 	socket_client.Run()
+}
+
+func HandleEventMessage(event slackevents.EventsAPIEvent, client *slack.Client) error {
+	switch event.Type {
+
+	case slackevents.CallbackEvent:
+
+		inner_event := event.InnerEvent
+
+		switch ev := inner_event.Data.(type) {
+		case *slackevents.AppMentionEvent:
+			err := HandleAppMentionEventToBot(ev, client)
+			if err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("unsupported event type")
+	}
+	return nil
+}
+
+func HandleAppMentionEventToBot(event *slackevents.AppMentionEvent, client *slack.Client) error {
+
+	user, err := client.GetUserInfo(event.User)
+	if err != nil {
+		return err
+	}
+
+	text := strings.ToLower(event.Text)
+
+	attachment := slack.Attachment{}
+
+	if strings.Contains(text, "hello") || strings.Contains(text, "hi") {
+		attachment.Text = fmt.Sprintf("Hello %s", user.Name)
+		attachment.Color = "#4af030"
+	} else if strings.Contains(text, "weather") {
+		attachment.Text = fmt.Sprintf("Weather is sunny today. %s", user.Name)
+		attachment.Color = "#4af030"
+	} else {
+		attachment.Text = fmt.Sprintf("I am good. How are you %s?", user.Name)
+		attachment.Color = "#4af030"
+	}
+	_, _, err = client.PostMessage(event.Channel, slack.MsgOptionAttachments(attachment))
+	if err != nil {
+		return fmt.Errorf("failed to post message: %w", err)
+	}
+	return nil
 }
