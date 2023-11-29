@@ -1,12 +1,14 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"log"
 	"os"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 )
 
 func main() {
@@ -14,26 +16,43 @@ func main() {
 	godotenv.Load(".env")
 
 	token := os.Getenv("SLACK_AUTH_TOKEN")
-	channel_id := os.Getenv("SLACK_CHANNEL_ID")
+	app_token := os.Getenv("SLACK_APP_TOKEN")
+	//channel_id := os.Getenv("SLACK_CHANNEL_ID")
 
-	client := slack.New(token, slack.OptionDebug(true))
-	attachment := slack.Attachment{
-		Pretext: "Super Bot Message",
-		Text:    "Golang COnnection Test",
-		Color:   "4af030",
-		Fields: []slack.AttachmentField{
-			{
-				Title: "Date",
-				Value: time.Now().String(),
-			},
-		},
-	}
+	client := slack.New(token, slack.OptionDebug(true), slack.OptionAppLevelToken(app_token))
 
-	_, timestamp, err := client.PostMessage(channel_id, slack.MsgOptionAttachments(attachment))
+	socket_client := socketmode.New(
+		client,
+		socketmode.OptionDebug(true),
+		socketmode.OptionLog(log.New(os.Stdout, "socketmode: ", log.Lshortfile|log.LstdFlags)),
+	)
 
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Message sent at %s", timestamp)
+	ctx, cancel := context.WithCancel(context.Background())
 
+	defer cancel()
+
+	go func(ctx context.Context, client *slack.Client, socket_client *socketmode.Client) {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("Shutting down socketmode listener.")
+				return
+			case event := <-socket_client.Events:
+				switch event.Type {
+				case socketmode.EventTypeEventsAPI:
+					events_api, ok := event.Data.(slackevents.EventsAPIEvent)
+					if !ok {
+						log.Printf("Could not type cast event to the events API: %v\n", event)
+						continue
+					}
+
+					socket_client.Ack(*event.Request)
+					log.Println(events_api)
+				}
+			}
+		}
+
+	}(ctx, client, socket_client)
+
+	socket_client.Run()
 }
